@@ -10,10 +10,10 @@ import numpy
 xCells = 30
 yCells = 15
 boxSize = 40
-arrowSize = 40
-fontSize = 8
+[arrowDensity, arrowSize, arrowShape, arrowColor, arrowWidth] = [3, 50, (2, 3, 1), "SpringGreen3", 2]
+fontSize = 5
 
-fracWall = 0.2
+fracWall = 0.15
 inPressure = 100
 outPressure = 0
 deltaTime = 0.02
@@ -28,14 +28,17 @@ xVelocities = numpy.zeros( (xCells + 1, yCells))
 yVelocities = numpy.zeros( (xCells, yCells + 1))
 pressures = numpy.zeros( (xCells, yCells))
 
-xArrows = numpy.empty( (xCells + 1, yCells), dtype = object)
-yArrows = numpy.empty( (xCells, yCells + 1), dtype = object)
+velocityArrows = numpy.empty( (arrowDensity * xCells + 1, arrowDensity * yCells + 1), dtype = object)
 pressureDisplays = numpy.empty( (xCells, yCells), dtype = object)
 pressureColors = numpy.empty( (xCells, yCells), dtype = object)
 
+particleSpeed = 0.5
+particlePositions = []
+particleDisplays = []
+
 root = tkinter.Tk()
 root.geometry(f"{xCells * boxSize + 100}x{yCells * boxSize + 100}")
-root.title("Lattice Boltzmann Flow")
+root.title("Eulerian Fluid Simulation")
 canvas = tkinter.Canvas(root, bg = "gray6")
 canvas.pack(fill = "both", expand = True)
 
@@ -54,9 +57,6 @@ def createGrid():
                 xVelocityGrid[i + 1][j] = False
                 yVelocityGrid[i][j] = False
                 yVelocityGrid[i][j + 1] = False
-    for i in range(xCells):
-        for j in range(yCells):
-            pressures[i][j] = (random.random()-.5)*10
                 
 #returns the pressure of a cell, or the inlet or outlet pressure
 def getPressure(xCoord, yCoord):
@@ -91,16 +91,22 @@ def getPressureCalculationVariables(xCoord, yCoord):
 
 #updates the velocity according the surrounding pressures and the flow in/out of the cell
 def updatePressures():
-    temp = numpy.zeros( (xCells, yCells) )
+    rand = 0 if random.random() < 0.5 else 0
     for i in range(xCells):
-        for j in range(yCells):
+        for j in range(rand, yCells, 2):
             [edgeCount, pressureSum, divergence] = getPressureCalculationVariables(i, j)
             if edgeCount == 0:
-                temp[i][j] = 0
+                pressures[i][j] = 0
             else:
-                temp[i][j] = (pressureSum - density * length * divergence / deltaTime) / edgeCount
-    global pressures
-    pressures = temp
+                pressures[i][j] = (pressureSum - density * length * divergence / deltaTime) / edgeCount
+    rand = (rand + 1) % 2
+    for i in range(xCells):
+        for j in range(rand, yCells, 2):
+            [edgeCount, pressureSum, divergence] = getPressureCalculationVariables(i, j)
+            if edgeCount == 0:
+                pressures[i][j] = 0
+            else:
+                pressures[i][j] = (pressureSum - density * length * divergence / deltaTime) / edgeCount
 
 #finds laplacian of x velocities
 def getXVelocityLaplacian(xCoord, yCoord):
@@ -156,6 +162,54 @@ def updateVelocities():
     xVelocities += xDeltaV
     yVelocities += yDeltaV
 
+#returns x velocity, or false if it does not exist
+def isXVelocity(xCoord, yCoord):
+    if xCoord < 0 or xCoord > xCells or yCoord < 0 or yCoord > yCells - 1 or not xVelocityGrid[xCoord][yCoord]:
+        return False
+    return xVelocities[xCoord][yCoord]
+
+#returns y velocity, or false if it does not exist
+def isYVelocity(xCoord, yCoord):
+    if xCoord < 0 or xCoord > xCells - 1 or yCoord < 0 or yCoord > yCells or not yVelocityGrid[xCoord][yCoord]:
+        return False
+    return yVelocities[xCoord][yCoord]
+
+#linear interpolation with no slip condition if one value is False
+def specialInterpolation(value1, value2, distance):
+    disabled1 = value1 is False
+    disabled2 = value2 is False
+    if disabled1 and disabled2:
+        return 0
+    if disabled1:
+        return value2 * max(0, 2 * distance - 1)
+    if disabled2: 
+        return value1 * max(0, 1 - 2 * distance)
+    return value1 * (1 - distance) + value2 * distance
+
+#linearly interpolates x velocity based on closest 4 grid values
+def interpolateXVelocity(xCoord, yCoord):
+    leftX = math.floor(xCoord)
+    topY = round(yCoord) - 1
+    topDistance = yCoord - topY - 0.5
+    leftDistance = xCoord - leftX
+    leftAvg = specialInterpolation(isXVelocity(leftX, topY), isXVelocity(leftX, topY + 1), topDistance)
+    rightAvg = specialInterpolation(isXVelocity(leftX + 1, topY), isXVelocity(leftX + 1, topY + 1), topDistance)
+    return specialInterpolation(leftAvg, rightAvg, leftDistance)
+
+#linearly interpolates y velocity based on closest 4 grid values
+def interpolateYVelocity(xCoord, yCoord):
+    topY = math.floor(yCoord)
+    leftX = round(xCoord) - 1
+    leftDistance = xCoord - leftX - 0.5
+    topDistance = yCoord - topY
+    topAvg = specialInterpolation(isYVelocity(leftX, topY), isYVelocity(leftX + 1, topY), leftDistance)
+    bottomAvg = specialInterpolation(isYVelocity(leftX, topY + 1), isYVelocity(leftX + 1, topY + 1), leftDistance)
+    return specialInterpolation(topAvg, bottomAvg, topDistance)
+
+#combines x and y velocity interpolation
+def interpolateVelocity(xCoord, yCoord):
+    return numpy.array([interpolateXVelocity(xCoord, yCoord), interpolateYVelocity(xCoord, yCoord)])
+
 #draws the grid, pressure displays, and velocity arrows
 def drawGrid(): 
     for i in range(xCells):
@@ -173,12 +227,12 @@ def drawGrid():
         canvas.create_line(50, i * boxSize + 50, xCells * boxSize + 50, i * boxSize + 50, fill = "gray16")
 
     #currently drawing arrows into solid cells, could change
-    for i in range(xCells + 1):
-        for j in range(yCells):
-            xArrows[i][j] = canvas.create_line(i * boxSize + 50, (j + 0.5) * boxSize + 50, i * boxSize + 50 + xVelocities[i][j] * arrowSize, (j + 0.5) * boxSize + 50, arrow = tkinter.LAST, arrowshape = (5, 3, 2),fill = "SpringGreen3", width = 2)
-    for i in range(xCells):
-        for j in range(yCells + 1):
-            yArrows[i][j] = canvas.create_line((i + 0.5) * boxSize + 50, j * boxSize + 50, (i + 0.5) * boxSize + 50, j * boxSize + 50 + yVelocities[i][j] * arrowSize, arrow = tkinter.LAST, arrowshape = (5, 3, 2),fill = "SpringGreen3", width = 2)
+    for i in range(arrowDensity * xCells + 1):
+        for j in range(arrowDensity * yCells + 1):
+            x = i / arrowDensity
+            y = j / arrowDensity
+            [xVelocity, yVelocity] = interpolateVelocity(x, y)
+            velocityArrows[i][j] = canvas.create_line(x * boxSize + 50, y * boxSize + 50, x * boxSize + 50 + xVelocity * arrowSize, y * boxSize + 50 + yVelocity * arrowSize, arrow = tkinter.LAST, arrowshape = arrowShape,fill = arrowColor, width = arrowWidth)
 
 #updates pressure display, color, and velocity arrows
 def updateDisplay():
@@ -186,34 +240,64 @@ def updateDisplay():
         for j in range(yCells):
             if grid[i][j]:
                 pressure = pressures[i][j]
-                percent = (pressure - outPressure) / (inPressure - outPressure)
+                pressureFrac = (pressure - outPressure) / (inPressure - outPressure)
                 canvas.itemconfig(pressureDisplays[i][j], text = f"{pressure: .2f}")
-                if percent <= 0:
-                    t = (percent + 1.5) / 1.5
+                if pressureFrac <= 0:
+                    t = max(-1, (pressureFrac + 1.5) / 1.5)
                     r = 255
                     g = int(255 * t)
                     b = int(255 * t)
                 else:
-                    t = percent / 1.5
+                    t = min(1, pressureFrac / 1.5)
                     r = int(255 * (1 - t))
                     g = int(255 * (1 - t))
                     b = 255
                 canvas.itemconfig(pressureColors[i][j], fill = f"#{r:02x}{g:02x}{b:02x}")
     
     #currently drawing arrows into solid cells, could change
-    for i in range(xCells + 1):
-        for j in range(yCells):
-            canvas.coords(xArrows[i][j], i * boxSize + 50, (j + 0.5) * boxSize + 50, i * boxSize + 50 + xVelocities[i][j] * arrowSize, (j + 0.5) * boxSize + 50)
-    for i in range(xCells):
-        for j in range(yCells + 1):
-            canvas.coords(yArrows[i][j], (i + 0.5) * boxSize + 50, j * boxSize + 50, (i + 0.5) * boxSize + 50, j * boxSize + 50 + yVelocities[i][j] * arrowSize)
+    for i in range(arrowDensity * xCells + 1):
+        for j in range(arrowDensity * yCells + 1):
+            x = i / arrowDensity
+            y = j / arrowDensity
+            [xVelocity, yVelocity] = interpolateVelocity(x, y)
+            canvas.coords(velocityArrows[i][j], x * boxSize + 50, y * boxSize + 50, x * boxSize + 50 + xVelocity * arrowSize, y * boxSize + 50 + yVelocity * arrowSize)
 
+#updates position and display of particles to simulate streamlines
+def updateParticles():
+    i = len(particlePositions) - 1
+    while i >= 0:
+        currentPosition = particlePositions[i]
+        velocity = interpolateVelocity(currentPosition[0], currentPosition[1])
+        newPosition = currentPosition + velocity * deltaTime / length * particleSpeed
+        if newPosition[0] > 0 and newPosition[0] < xCells and newPosition[1] > 0 and newPosition[1] < yCells:
+            particlePositions[i] = newPosition
+            canvas.coords(particleDisplays[i], newPosition[0] * boxSize + 48, newPosition[1] * boxSize + 48, newPosition[0] * boxSize + 52, newPosition[1] * boxSize + 52)
+        else:
+            particlePositions.pop(i)
+            canvas.delete(particleDisplays[i])
+            particleDisplays.pop(i)
+        i = i - 1
+
+#runs simulation by updating pressures, velocities, and display
 def runSimulation():
     for i in range(10):
         updatePressures()
     updateVelocities()
     updateDisplay()
+    updateParticles()
     root.after(20, runSimulation)
+
+#detects click and creates particle at that position
+def mouseClick(event):
+    x = event.x
+    y = event.y
+    if x > 50 and x < xCells * boxSize + 50 and y > 50 and y < yCells * boxSize + 50:
+        xCoord = (x - 50) / boxSize
+        yCoord = (y - 50) / boxSize
+        if(grid[math.floor(xCoord)][math.floor(yCoord)]):
+            particlePositions.append(numpy.array([xCoord, yCoord]))
+            particleDisplays.append(canvas.create_oval(xCoord * boxSize + 48, yCoord * boxSize + 48, xCoord * boxSize + 52, yCoord * boxSize + 52, fill = "firebrick2", outline = "firebrick2"))
+canvas.bind("<Button-1>", mouseClick)
 
 createGrid()
 drawGrid()
