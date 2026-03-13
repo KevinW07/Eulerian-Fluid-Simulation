@@ -91,17 +91,15 @@ def getPressureCalculationVariables(xCoord, yCoord):
 
 #updates the velocity according the surrounding pressures and the flow in/out of the cell
 def updatePressures():
-    rand = 0 if random.random() < 0.5 else 0
     for i in range(xCells):
-        for j in range(rand, yCells, 2):
+        for j in range(0, yCells, 2):
             [edgeCount, pressureSum, divergence] = getPressureCalculationVariables(i, j)
             if edgeCount == 0:
                 pressures[i][j] = 0
             else:
                 pressures[i][j] = (pressureSum - density * length * divergence / deltaTime) / edgeCount
-    rand = (rand + 1) % 2
     for i in range(xCells):
-        for j in range(rand, yCells, 2):
+        for j in range(1, yCells, 2):
             [edgeCount, pressureSum, divergence] = getPressureCalculationVariables(i, j)
             if edgeCount == 0:
                 pressures[i][j] = 0
@@ -206,10 +204,6 @@ def interpolateYVelocity(xCoord, yCoord):
     bottomAvg = specialInterpolation(isYVelocity(leftX, topY + 1), isYVelocity(leftX + 1, topY + 1), leftDistance)
     return specialInterpolation(topAvg, bottomAvg, topDistance)
 
-#combines x and y velocity interpolation
-def interpolateVelocity(xCoord, yCoord):
-    return numpy.array([interpolateXVelocity(xCoord, yCoord), interpolateYVelocity(xCoord, yCoord)])
-
 #draws the grid, pressure displays, and velocity arrows
 def drawGrid(): 
     for i in range(xCells):
@@ -231,7 +225,8 @@ def drawGrid():
         for j in range(arrowDensity * yCells + 1):
             x = i / arrowDensity
             y = j / arrowDensity
-            [xVelocity, yVelocity] = interpolateVelocity(x, y)
+            xVelocity = interpolateXVelocity(x, y)
+            yVelocity = interpolateYVelocity(x, y)
             velocityArrows[i][j] = canvas.create_line(x * boxSize + 50, y * boxSize + 50, x * boxSize + 50 + xVelocity * arrowSize, y * boxSize + 50 + yVelocity * arrowSize, arrow = tkinter.LAST, arrowshape = arrowShape,fill = arrowColor, width = arrowWidth)
 
 #updates pressure display, color, and velocity arrows
@@ -259,19 +254,26 @@ def updateDisplay():
         for j in range(arrowDensity * yCells + 1):
             x = i / arrowDensity
             y = j / arrowDensity
-            [xVelocity, yVelocity] = interpolateVelocity(x, y)
+            xVelocity = interpolateXVelocity(x, y)
+            yVelocity = interpolateYVelocity(x, y)
             canvas.coords(velocityArrows[i][j], x * boxSize + 50, y * boxSize + 50, x * boxSize + 50 + xVelocity * arrowSize, y * boxSize + 50 + yVelocity * arrowSize)
 
 #updates position and display of particles to simulate streamlines
 def updateParticles():
     i = len(particlePositions) - 1
     while i >= 0:
-        currentPosition = particlePositions[i]
-        velocity = interpolateVelocity(currentPosition[0], currentPosition[1])
-        newPosition = currentPosition + velocity * deltaTime / length * particleSpeed
-        if newPosition[0] > 0 and newPosition[0] < xCells and newPosition[1] > 0 and newPosition[1] < yCells:
-            particlePositions[i] = newPosition
-            canvas.coords(particleDisplays[i], newPosition[0] * boxSize + 48, newPosition[1] * boxSize + 48, newPosition[0] * boxSize + 52, newPosition[1] * boxSize + 52)
+        initialPosition = particlePositions[i]
+        k1 = numpy.array([interpolateXVelocity(initialPosition[0], initialPosition[1]), interpolateYVelocity(initialPosition[0], initialPosition[1])])
+        position1 = initialPosition + k1 * deltaTime / length * particleSpeed / 2
+        k2 = numpy.array([interpolateXVelocity(position1[0], position1[1]), interpolateYVelocity(position1[0], position1[1])])
+        position2 = position1 + k2 * deltaTime / length * particleSpeed / 2
+        k3 = numpy.array([interpolateXVelocity(position2[0], position2[1]), interpolateYVelocity(position2[0], position2[1])])
+        position3 = position2 + k2 * deltaTime / length * particleSpeed
+        k4 = numpy.array([interpolateXVelocity(position3[0], position3[1]), interpolateYVelocity(position3[0], position3[1])])
+        finalPosition = initialPosition + (k1 + 2 * k2 + 2 * k3 + k4) / 6 * deltaTime / length * particleSpeed
+        if finalPosition[0] > 0 and finalPosition[0] < xCells and finalPosition[1] > 0 and finalPosition[1] < yCells:
+            particlePositions[i] = finalPosition
+            canvas.coords(particleDisplays[i], finalPosition[0] * boxSize + 48, finalPosition[1] * boxSize + 48, finalPosition[0] * boxSize + 52, finalPosition[1] * boxSize + 52)
         else:
             particlePositions.pop(i)
             canvas.delete(particleDisplays[i])
