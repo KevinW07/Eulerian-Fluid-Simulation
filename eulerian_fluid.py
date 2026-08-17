@@ -92,14 +92,14 @@ def getPressureCalculationVariables(xCoord, yCoord):
 #updates the velocity according the surrounding pressures and the flow in/out of the cell
 def updatePressures():
     for i in range(xCells):
-        for j in range(0, yCells, 2):
+        for j in range(i % 2, yCells, 2):
             [edgeCount, pressureSum, divergence] = getPressureCalculationVariables(i, j)
             if edgeCount == 0:
                 pressures[i][j] = 0
             else:
                 pressures[i][j] = (pressureSum - density * length * divergence / deltaTime) / edgeCount
     for i in range(xCells):
-        for j in range(1, yCells, 2):
+        for j in range((i + 1) % 2, yCells, 2):
             [edgeCount, pressureSum, divergence] = getPressureCalculationVariables(i, j)
             if edgeCount == 0:
                 pressures[i][j] = 0
